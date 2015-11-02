@@ -1,0 +1,80 @@
+---
+title: "Loan Data Exploration"
+author: "Ben S"
+date: "Sunday, November 01, 2015"
+output: html_document
+---
+
+The project I propose is to look at the full payment history of loans from peer-to-peer lending platforms in order to use the payment history of a current loan in order to predict the likelihood of that loan defaulting in the future.
+
+Similar survival rate analyses have been done using data available at loan origination, however, I was unable to find any publicly available reserach that would take into account the current payment history of a loan such as, for example, the number of late payments or how many days late such a payment was made. 
+
+Having this information available would allow peer-to-peer lenders to make better decisions about purchasing and/or selling loan notes on secondary trading platforms, and could significantly increase returns for individual investors.
+
+For the purpose of this initial exploration the viability of project, we'll use the loan data available from lendingclub.com at their additional statistics site: http://additionalstatistics.lendingclub.com/ Specifically, we'll use the "Payment History File"" that includes all payments made to investors only.
+
+Here is what the data looks like:
+```{r,  echo=FALSE, warning=FALSE}
+##Preparation & Load data
+library(ggplot2)
+##Read 200k lines for initial exploration, relevant columns only
+loans<-read.csv("paym_history.csv",nrow=200000,colClasses = c(rep("factor",4),"integer",rep("NULL",36)))
+loans$PERIOD_END_LSTAT <- ordered(loans$PERIOD_END_LSTAT,levels=c("Fully Paid","Current","In Grace Period","Late (16-30 days)","Late (31-120 days)","Default","Charged Off"))
+head(loans)
+```
+
+Let's look at a plot of loans' payment statuses over time:
+
+```{r, echo=FALSE, warning=FALSE,fig.width=10}
+##Pick a random sample of 1000 loans
+Lsamp <- sample(loans$LOAN_ID,1000)
+##Plot their payment status vs month since origination
+ggplot(loans[loans$LOAN_ID%in%Lsamp,],aes(x=MOB,y=PERIOD_END_LSTAT,group=LOAN_ID))+geom_line(aes(alpha=0.1),position=position_jitter(width=0, height=0.3))
+```
+
+This plot shows us that there are some challenges with our data. For example, there are very loans ever have the status "Late (16-30)" or "In Grace Period", instead loans jump from "Current" immediately to "Late (31-120 days)". This indicates that the monthly data doesn't acurately capture the difference between on-time payments and "less than 31 days late" payments. This is a challenge that will need to be addressed prior to a full analysis.
+
+We can also see that only very few loans that end up in "Default" recover. The vast majority end up as "Charged Off". For loans that are between 31 and 120 days later however, there are more loans that end up recovering and being able to predict those that will recover and those that won't would be big help to investors. 
+
+Next, let's aggregate the data by loan in order to start comparing loans that recover from those that don't. We'll do this by classifying each loan according to whether it was ever late, the most it was ever late, as well as when it first achieved late status. Then we'll also calculate the length of how long it was later for before either becoming current again, or being charged off: 
+
+```{r,  echo=FALSE, warning=FALSE}
+
+##Set-up New variables
+loanIDs <- unique(loans$LOAN_ID)
+LOAN <- numeric(length(loanIDs))
+final <- character(length(loanIDs))
+everLate <- logical(length(loanIDs))
+worst <- character(length(loanIDs))
+recovered <- logical(length(loanIDs))
+firstLate <- numeric(length(loanIDs))
+lengthLate <- numeric(length(loanIDs))
+
+for(i in 1:length(loanIDs)){
+thisLoan <- loans[loans$LOAN_ID==(loanIDs[i]),]      
+LOAN[i] <- thisLoan$LOAN_ID[1]
+final[i] <- tail(as.character(thisLoan$PERIOD_END_LSTAT),n=1)
+everLate[i] <- as.logical(any(thisLoan$PERIOD_END_LSTAT %in% c("Late (16-30 days)","Late (31-120 days)","Default","Charged Off")))
+worst[i] <- as.character(max(thisLoan$PERIOD_END_LSTAT))
+recovered[i] <- (everLate[i]==TRUE && final[i] == "Fully Paid")
+firstLate[i] <- min(thisLoan$MOB[thisLoan$PERIOD_END_LSTAT %in% c("Late (16-30 days)","Late (31-120 days)","Default","Charged Off")])
+lengthLate[i] <- max(thisLoan$MOB[thisLoan$PERIOD_END_LSTAT %in% c("Late (16-30 days)","Late (31-120 days)","Default","Charged Off")])-firstLate[i]
+}      
+
+perLoan <- data.frame(LOAN,final,everLate,worst,recovered,firstLate,lengthLate)
+perLoan$final <- ordered(perLoan$final,levels=c("Fully Paid","Current","In Grace Period","Late (16-30 days)","Late (31-120 days)","Default","Charged Off"))
+perLoan$worst <- ordered(perLoan$worst,levels=c("Fully Paid","Current","In Grace Period","Late (16-30 days)","Late (31-120 days)","Default"))
+
+head(perLoan)
+
+```
+
+This allows us to now visualize some additional information, for example: How long the loan was late vs. when it first became late.
+
+```{r echo=FALSE, warning=FALSE,fig.width=10}
+ggplot(perLoan[perLoan$everLate==TRUE,],aes(x=firstLate,y=lengthLate,color=recovered))+geom_jitter()
+```
+
+One interesting pattern here is that a lot of the loans that do recover are only late very short periods, as seen by the concentration of recovered loans on near the horizontal axis. Whereas, the loans that don't recover obviously stay late for a longer period of time. Additionally, it seems like loans that don't recover tend to first go into late status earlier than loans that end up recovering.  
+
+In addition to following up to see if the patterns observered in the plot are actaully useful, the next steps in this analysis should include looking to see if any of the information available about the borrower helps differentiate between loans that recover and those that don't.
